@@ -21,8 +21,22 @@
 #define UNMAP(pointer) {munmap((pointer), sizeof((pointer)));}
 #define fork_err "An error occurred while trying to fork the process!\n"
 #define argv_err "Wrong arguments!\n"
+#define imm_err "An error occurred in the immigrant function!\n"
 
 FILE *out_file;
+
+sem_t *noJudge = NULL;
+sem_t *mutex = NULL;
+sem_t *confirmed = NULL;
+sem_t *Jexit = NULL;
+sem_t *allGone = NULL;
+sem_t *allSignedIn = NULL;
+int *entered = NULL;
+int *checked = NULL;
+int *inBuilding = NULL;
+int *processNum = NULL;
+int *immNum = NULL;
+int *judge = NULL;
 
 struct ARG{
     int immAmount;
@@ -37,62 +51,102 @@ int initialize() {
         fprintf(stderr, "Error: the output file could not be opened!\n");
         exit(-1);
     }
-    // sdilene promenne
+
+    // semaphores
+    if ((noJudge = sem_open("/xburia28.ios.proj2.noJudge", O_CREAT | O_EXCL, 0666, 1)) == SEM_FAILED) return -1;
+    if ((mutex = sem_open("/xburia28.ios.proj2.mutex", O_CREAT | O_EXCL, 0666, 1)) == SEM_FAILED) return -1;
+    if ((confirmed = sem_open("/xburia28.ios.proj2.confirmed", O_CREAT | O_EXCL, 0666, 0)) == SEM_FAILED) return -1;
+    if ((Jexit = sem_open("/xburia28.ios.proj2.Jexit", O_CREAT | O_EXCL, 0666, 0)) == SEM_FAILED) return -1;
+    if ((allGone = sem_open("/xburia28.ios.proj2.allGone", O_CREAT | O_EXCL, 0666, 0)) == SEM_FAILED) return -1;
+    if ((allSignedIn = sem_open("/xburia28.ios.proj2.allSignedIn", O_CREAT | O_EXCL, 0666, 0)) == SEM_FAILED) return -1;
+
+    // map shared variables
+    MMAP(entered);
+    MMAP(checked);
+    MMAP(processNum);
+    MMAP(inBuilding);
+    MMAP(immNum);
+    MMAP(judge);
+    MMAP(allSignedIn);
+
+    *processNum = 0;
+
     return 0;
 }
 
 int processArguments(int argc, char *argv[]) {
     if (argc != 6) {
         fprintf(stderr, "5 arguments are needed to run the program!\n");
-        exit(-2);
+        return -1;
     }
 
     char *err;
-    if((arg.immAmount = strtol(argv[1], &err, 10)) <= 0) {
+    if((arg.immAmount = (int)strtol(argv[1], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     } else if (arg.immAmount < 1 || *err != '\0') {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     }
 
-    if((arg.time_newImm = strtol(argv[2], &err, 10)) <= 0) {
+    if((arg.time_newImm = (int)strtol(argv[2], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     } else if (arg.time_newImm < 0 || arg.time_newImm > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     }
 
-    if((arg.time_judgeOutside = strtol(argv[3], &err, 10)) <= 0) {
+    if((arg.time_judgeOutside = (int)strtol(argv[3], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     } else if (arg.time_judgeOutside < 0 || arg.time_judgeOutside > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     }
 
-    if((arg.time_getCertificate = strtol(argv[4], &err, 10)) <= 0) {
+    if((arg.time_getCertificate = (int)strtol(argv[4], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     } else if (arg.time_getCertificate < 0 || arg.time_getCertificate > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     }
 
-    if((arg.time_issueCertificate = strtol(argv[5], &err, 10)) <= 0) {
+    if((arg.time_issueCertificate = (int)strtol(argv[5], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     } else if (arg.time_issueCertificate < 0 || arg.time_issueCertificate > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        exit(-3);
+        return -1;
     }
 }
 
 void clean() {
-    // unmap sdilene promenne
-    // sem_close
-    // sem_unlink
+    // unmap shared variables
+    UNMAP(entered);
+    UNMAP(checked);
+    UNMAP(processNum);
+    UNMAP(immNum);
+    UNMAP(inBuilding);
+    UNMAP(allSignedIn);
+    UNMAP(judge);
+
+    // close semaphores
+    sem_close(noJudge);
+    sem_close(mutex);
+    sem_close(confirmed);
+    sem_close(Jexit);
+    sem_close(allGone);
+
+    // unlink semaphores
+    sem_unlink("xburia28.ios.proj2.noJudge");
+    sem_unlink("xburia28.ios.proj2.mutex");
+    sem_unlink("xburia28.ios.proj2.confirmed");
+    sem_unlink("xburia28.ios.proj2.Jexit");
+    sem_unlink("xburia28.ios.proj2.allGone");
+
+    // close file
     if (out_file != NULL) fclose(out_file);
 }
 
@@ -117,12 +171,36 @@ int msleep(long time) {
     return res;
 }
 
-int judge() {
+int judgeProcess() {
 
 }
 
 int immigrant() {
+    int immID = (*immNum)++;
+    sem_wait(noJudge);
+    fprintf(out_file, "%d : IMM %d : enters : %d : %d : %d\n", ++(*processNum), immID, ++(*entered), *checked, ++(*inBuilding));
+    sem_post(noJudge);
 
+    sem_wait(mutex);
+    fprintf(out_file, "%d : IMM %d : checks : %d : %d : %d\n", ++(*processNum), immID, *entered, ++(*checked), *inBuilding);
+    if ((*judge == 1) && (*entered == *checked)) {
+        sem_post(allSignedIn);
+    } else {
+        sem_post(mutex);
+    }
+    sem_wait(confirmed);
+    fprintf(out_file, "%d : IMM %d : wants certificate : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, *inBuilding);
+    msleep(randomNum(arg.time_getCertificate));
+    fprintf(out_file, "%d : IMM %d : got certificate : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, *inBuilding);
+    sem_wait(Jexit);
+    fprintf(out_file, "%d : IMM %d : leaves : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, (*inBuilding)--);
+    if (*checked == 0) {
+        sem_post(allGone);
+    } else {
+        sem_post(Jexit);
+    }
+    if (errno != 0) {fprintf(stderr, imm_err); exit(-1);}
+    exit(0);
 }
 
 void immGenerator() {
@@ -145,8 +223,15 @@ void immGenerator() {
 }
 
 int main(int argc, char *argv[]) {
-    initialize();
-    processArguments(argc, argv);
+    if (initialize() == -1) {
+        clean();
+        return -1;
+    }
+
+    if (processArguments(argc, argv) == -1) {
+        clean();
+        return -1;
+    }
 
     pid_t judge = fork();
     if (judge < 0) {
