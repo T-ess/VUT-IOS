@@ -16,6 +16,9 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <errno.h>
+#include <stdbool.h>
+
+#include <limits.h>
 
 #define MMAP(pointer) {(pointer) = mmap(NULL, sizeof(*(pointer)), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);}
 #define UNMAP(pointer) {munmap((pointer), sizeof((pointer)));}
@@ -37,6 +40,7 @@ int *inBuilding = NULL;
 int *processNum = NULL;
 int *immNum = NULL;
 int *judge = NULL;
+int *totalIssued = NULL;
 
 struct ARG{
     int immAmount;
@@ -68,6 +72,7 @@ int initialize() {
     MMAP(immNum);
     MMAP(judge);
     MMAP(allSignedIn);
+    MMAP(totalIssued);
 
     *processNum = 0;
 
@@ -77,49 +82,50 @@ int initialize() {
 int processArguments(int argc, char *argv[]) {
     if (argc != 6) {
         fprintf(stderr, "5 arguments are needed to run the program!\n");
-        return -1;
+        return 1;
     }
 
     char *err;
     if((arg.immAmount = (int)strtol(argv[1], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     } else if (arg.immAmount < 1 || *err != '\0') {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     }
 
     if((arg.time_newImm = (int)strtol(argv[2], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     } else if (arg.time_newImm < 0 || arg.time_newImm > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     }
 
     if((arg.time_judgeOutside = (int)strtol(argv[3], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     } else if (arg.time_judgeOutside < 0 || arg.time_judgeOutside > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     }
 
     if((arg.time_getCertificate = (int)strtol(argv[4], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     } else if (arg.time_getCertificate < 0 || arg.time_getCertificate > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     }
 
     if((arg.time_issueCertificate = (int)strtol(argv[5], &err, 10)) <= 0) {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     } else if (arg.time_issueCertificate < 0 || arg.time_issueCertificate > 2000 || *err != '\0') {
         fprintf(stderr, argv_err);
-        return -1;
+        return 1;
     }
+    return 0;
 }
 
 void clean() {
@@ -131,6 +137,7 @@ void clean() {
     UNMAP(inBuilding);
     UNMAP(allSignedIn);
     UNMAP(judge);
+    UNMAP(totalIssued);
 
     // close semaphores
     sem_close(noJudge);
@@ -172,28 +179,51 @@ int msleep(long time) {
 }
 
 int judgeProcess() {
-
+    while (true) {
+        sem_wait(noJudge);
+        sem_wait(mutex);
+        msleep(randomNum(arg.time_judgeOutside));
+        fprintf(stdout, "%d : JUDGE : wants to enter.\n", ++(*processNum));
+        fprintf(stdout, "%d : JUDGE : enters : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
+        if (*entered > *checked) {
+            fprintf(stdout, "%d : JUDGE : waits for imm : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
+            sem_post(mutex);
+            sem_wait(allSignedIn);
+        }
+        fprintf(stdout, "%d : JUDGE : starts confirmation : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
+        msleep(randomNum(arg.time_getCertificate));
+        *totalIssued += *checked;
+        *checked = 0;
+        *entered = 0;
+        fprintf(stdout, "%d : JUDGE : ends confirmation : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
+        msleep(randomNum(arg.time_getCertificate));
+        fprintf(stdout, "%d : JUDGE : leaves : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
+        if (*totalIssued == arg.immAmount) {
+            fprintf(stdout, "%d : JUDGE : finishes.\n", ++(*processNum));
+            exit(0);
+        }
+    }
 }
 
 int immigrant() {
     int immID = (*immNum)++;
     sem_wait(noJudge);
-    fprintf(out_file, "%d : IMM %d : enters : %d : %d : %d\n", ++(*processNum), immID, ++(*entered), *checked, ++(*inBuilding));
+    fprintf(stdout, "%d : IMM %d : enters : %d : %d : %d\n", ++(*processNum), immID, ++(*entered), *checked, ++(*inBuilding));
     sem_post(noJudge);
 
     sem_wait(mutex);
-    fprintf(out_file, "%d : IMM %d : checks : %d : %d : %d\n", ++(*processNum), immID, *entered, ++(*checked), *inBuilding);
+    fprintf(stdout, "%d : IMM %d : checks : %d : %d : %d\n", ++(*processNum), immID, *entered, ++(*checked), *inBuilding);
     if ((*judge == 1) && (*entered == *checked)) {
         sem_post(allSignedIn);
     } else {
         sem_post(mutex);
     }
     sem_wait(confirmed);
-    fprintf(out_file, "%d : IMM %d : wants certificate : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, *inBuilding);
+    fprintf(stdout, "%d : IMM %d : wants certificate : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, *inBuilding);
     msleep(randomNum(arg.time_getCertificate));
-    fprintf(out_file, "%d : IMM %d : got certificate : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, *inBuilding);
+    fprintf(stdout, "%d : IMM %d : got certificate : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, *inBuilding);
     sem_wait(Jexit);
-    fprintf(out_file, "%d : IMM %d : leaves : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, (*inBuilding)--);
+    fprintf(stdout, "%d : IMM %d : leaves : %d : %d : %d\n", ++(*processNum), immID, *entered, *checked, (*inBuilding)--);
     if (*checked == 0) {
         sem_post(allGone);
     } else {
@@ -205,15 +235,13 @@ int immigrant() {
 
 void immGenerator() {
     for(int i = 1; i <= arg.immAmount; i++) {
-        fprintf(stdout, "inside generator\n");
         pid_t imm = fork();
         if (imm < 0) {
             fprintf(stderr, fork_err);
             exit(-1);
         } else if(imm == 0) {
             // process immigrant
-            fprintf(stdout, "ahoj ja jsem imigrant %d \n", i);
-            exit(0);
+            immigrant();
         }
         msleep(randomNum(arg.time_newImm));
     }
@@ -228,9 +256,9 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    if (processArguments(argc, argv) == -1) {
+    if (processArguments(argc, argv) == 1) {
         clean();
-        return -1;
+        return 1;
     }
 
     pid_t judge = fork();
@@ -239,8 +267,7 @@ int main(int argc, char *argv[]) {
         exit(-1);
     } else if (judge == 0) {
         // process judge
-        fprintf(stdout, "judge\n");
-        exit(0);
+        judgeProcess();
     } else {
         pid_t generator = fork();
         if (generator < 0) {
@@ -248,7 +275,6 @@ int main(int argc, char *argv[]) {
             exit(-1);
         } else if (generator == 0) {
             // generate immigrants
-            fprintf(stdout, "generator\n");
             immGenerator();
         }
     }
