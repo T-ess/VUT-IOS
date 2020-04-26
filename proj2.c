@@ -53,7 +53,7 @@ struct ARG{
 int initialize() {
     if((out_file = fopen("proj2.out", "w")) == NULL) {
         fprintf(stderr, "Error: the output file could not be opened!\n");
-        exit(-1);
+        return 1;
     }
 
     // semaphores
@@ -73,8 +73,6 @@ int initialize() {
     MMAP(judge);
     MMAP(allSignedIn);
     MMAP(totalIssued);
-
-    *processNum = 0;
 
     return 0;
 }
@@ -145,6 +143,7 @@ void clean() {
     sem_close(confirmed);
     sem_close(Jexit);
     sem_close(allGone);
+    sem_close(allSignedIn);
 
     // unlink semaphores
     sem_unlink("xburia28.ios.proj2.noJudge");
@@ -152,9 +151,11 @@ void clean() {
     sem_unlink("xburia28.ios.proj2.confirmed");
     sem_unlink("xburia28.ios.proj2.Jexit");
     sem_unlink("xburia28.ios.proj2.allGone");
+    sem_unlink("xburia28.ios.proj2.allSignedIn");
 
     // close file
     if (out_file != NULL) fclose(out_file);
+    return;
 }
 
 int randomNum(int limit) {
@@ -180,9 +181,9 @@ int msleep(long time) {
 
 int judgeProcess() {
     while (true) {
+        msleep(randomNum(arg.time_judgeOutside));
         sem_wait(noJudge);
         sem_wait(mutex);
-        msleep(randomNum(arg.time_judgeOutside));
         fprintf(stdout, "%d : JUDGE : wants to enter.\n", ++(*processNum));
         fprintf(stdout, "%d : JUDGE : enters : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
         if (*entered > *checked) {
@@ -198,7 +199,8 @@ int judgeProcess() {
         fprintf(stdout, "%d : JUDGE : ends confirmation : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
         msleep(randomNum(arg.time_getCertificate));
         fprintf(stdout, "%d : JUDGE : leaves : %d : %d : %d\n", ++(*processNum), *entered, *checked, *inBuilding);
-        if (*totalIssued == arg.immAmount) {
+        fprintf(stdout, "%d", *totalIssued);
+        if (*totalIssued >= arg.immAmount) {
             fprintf(stdout, "%d : JUDGE : finishes.\n", ++(*processNum));
             exit(0);
         }
@@ -229,17 +231,17 @@ int immigrant() {
     } else {
         sem_post(Jexit);
     }
-    if (errno != 0) {fprintf(stderr, imm_err); exit(-1);}
     exit(0);
 }
 
-void immGenerator() {
+int immGenerator() {
     for(int i = 1; i <= arg.immAmount; i++) {
         pid_t imm = fork();
         if (imm < 0) {
             fprintf(stderr, fork_err);
+            clean();
             exit(-1);
-        } else if(imm == 0) {
+        } else if (imm == 0) {
             // process immigrant
             immigrant();
         }
@@ -251,12 +253,12 @@ void immGenerator() {
 }
 
 int main(int argc, char *argv[]) {
-    if (initialize() == -1) {
+    if (initialize() == 1) {
         clean();
-        return -1;
+        return 1;
     }
 
-    if (processArguments(argc, argv) == 1) {
+    if (processArguments(argc, argv) != 0) {
         clean();
         return 1;
     }
@@ -264,7 +266,8 @@ int main(int argc, char *argv[]) {
     pid_t judge = fork();
     if (judge < 0) {
         fprintf(stderr, fork_err);
-        exit(-1);
+        clean();
+        return -1;
     } else if (judge == 0) {
         // process judge
         judgeProcess();
@@ -272,7 +275,8 @@ int main(int argc, char *argv[]) {
         pid_t generator = fork();
         if (generator < 0) {
             fprintf(stderr, fork_err);
-            exit(-1);
+            clean();
+            return -1;
         } else if (generator == 0) {
             // generate immigrants
             immGenerator();
@@ -282,5 +286,5 @@ int main(int argc, char *argv[]) {
     wait(&status);
     wait(&status);
     clean();
-    exit(0);
+    return 0;
 }
